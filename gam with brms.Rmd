@@ -6,12 +6,12 @@ author: "Bindoff, A."
 
 `r Sys.Date()`
 
-The first half of this analysis is lifted from a blog by Gavin Simpson https://www.fromthebottomoftheheap.net/2018/04/21/fitting-gams-with-brms/, which shows how to fit a GAM with the `brms` package and Stan in R. The analysis is well documented in the aforementioned blog, with the suggestion that in Part II the non-constant variance will be modelled.  
+The first half of this analysis is lifted from a blog by Gavin Simpson https://www.fromthebottomoftheheap.net/2018/04/21/fitting-gams-with-brms/, which shows how to fit a GAM with the `brms` package and Stan in R. The analysis is well documented in the aforementioned blog, and includes a suggestion that in Part II the non-constant variance will be modelled.  
 
-Inspired by how easy it was to fit the model in `brms` I decided not to wait for Part II, and figured it out myself.  
+Inspired by how easy it was to fit the model in `brms` I decided not to wait for Part II, and figured out how to model the non-constant variance myself.  
 
 
-```{r, echo = F}
+```{r, echo = F, include = F}
 knitr::opts_chunk$set(message = F, warning = F)
 ## fitting GAMs with `brms`  (example lifted from https://www.fromthebottomoftheheap.net/2018/04/21/fitting-gams-with-brms/)
 
@@ -41,6 +41,8 @@ ggplot(mcycle, aes(x = times, y = accel)) +
        subtitle = "Measurements of head acceleration")
 ```
   
+There is no way to fit a straight line to this data, and fitting a polynomial might also present some challenges. Clearly, the assumption of constant variance is violated but for the purposes of exposition we will proceed to fit a GAM and a Bayesian GAM using a smooth spline.  
+
 Fit a model, $m_1$ with a GAM using the `mgcv` package.  
 
 
@@ -53,10 +55,10 @@ Plot the marginal effects
 
 
 ```{r}
-eS <- predict(m1, newdata = mcycle, type = "response", se = T)
-eS <- data.frame(eS, mcycle)
+me <- predict(m1, newdata = mcycle, type = "response", se = T)
+me <- data.frame(me, mcycle)
 
-ggplot(eS, aes(x = times, y = fit)) +
+ggplot(me, aes(x = times, y = fit)) +
   geom_line(size = 1, colour = "blue") +
   geom_ribbon(mapping = aes(ymin = fit - 1.96*se.fit, ymax = fit + 1.96*se.fit), alpha = 0.2) +
   geom_point(data = mcycle, aes(x = times, y = accel)) +
@@ -77,43 +79,38 @@ m2 <- brm(bf(accel ~ s(times)),
 
 summary(m2)
 
-
-#gam.vcomp(m1, rescale = FALSE)
-
 plot(marginal_effects(m2), points = TRUE)
 ```
 
   
-  It is clear that variance is not constant, but the model has made this assumption. Now fit a distributional regression model, $m_3$ which allows for non-constant variance.  
+  A possible solution is to model the non-constant variance by fitting a distributional regression model, $m_3$ which allows for this. The `bf` function in `brms` makes this trivially easy (in this example, at least) by letting you casually specify the additional term `sigma ~ s(times)` like you were ordering a kebab at 3am.  
   
 
 ```{r}
-## Distributional regression model
-
 m3 <- brm(bf(accel ~ s(times), sigma ~ s(times)),
   data = mcycle, family = gaussian(),
   cores = 2, seed = 17,
   iter = 4000, warmup = 1000, thin = 10, refresh = 0, 
   control = list(adapt_delta = 0.99, max_treedepth = 15)
 )
+
 summary(m3)
 plot(marginal_effects(m3), points = TRUE)
 ```
 
   
-  This looks much better. Now compare models using posterior predictive checks (generate data from the models and compare to observed data). Red is $m_2$ and blue is $m_3$.  
-  
+  This looks much better, it's a good kebab at any time of day or night. Now compare models using posterior predictive checks (generate data from the models $y^{rep}$ and compare to observed data $y$).  
   
 
 ```{r}
 par(mfrow = c(2, 2))
 pp_check(m2, nsamples = 30) + ggplot2::scale_color_manual(values = c("black", "indianred")) +
-  ggplot2::xlim(-200, 200)
+  ggplot2::xlim(-200, 200) + labs(title = "m2")
 pp_check(m3, nsamples = 30) + ggplot2::scale_color_manual(values = c("black", "dodgerblue")) +
-  ggplot2::xlim(-200, 200)
+  ggplot2::xlim(-200, 200) + labs(title = "m3")
 pp_check(m2, nsamples = 30, type = "ecdf_overlay") + ggplot2::scale_color_manual(values = c("black", "indianred")) +
-  ggplot2::xlim(-200, 200)
-pp_check(m3, nsamples = 30, type = "ecdf_overlay") + ggplot2::scale_color_manual(values = c("black", "dodgerblue"))+   ggplot2::xlim(-200, 200)
+  ggplot2::xlim(-200, 200) + labs(title = "m2")
+pp_check(m3, nsamples = 30, type = "ecdf_overlay") + ggplot2::scale_color_manual(values = c("black", "dodgerblue"))+   ggplot2::xlim(-200, 200) + labs(title = "m3")
 ```
   
   
@@ -123,6 +120,5 @@ Compare models with Leave One Out cross-validation (smaller is better)
 
 ```{r}
 LOO(m2, m3)
-
 ```
 

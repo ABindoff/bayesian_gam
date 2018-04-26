@@ -4,35 +4,9 @@ Bindoff, A.
 
 2018-04-26
 
-The first half of this analysis is lifted from a blog by Gavin Simpson <https://www.fromthebottomoftheheap.net/2018/04/21/fitting-gams-with-brms/>, which shows how to fit a GAM with the `brms` package and Stan in R. The analysis is well documented in the aforementioned blog, with the suggestion that in Part II the non-constant variance will be modelled.
+The first half of this analysis is lifted from a blog by Gavin Simpson <https://www.fromthebottomoftheheap.net/2018/04/21/fitting-gams-with-brms/>, which shows how to fit a GAM with the `brms` package and Stan in R. The analysis is well documented in the aforementioned blog, and includes a suggestion that in Part II the non-constant variance will be modelled.
 
-Inspired by how easy it was to fit the model in `brms` I decided not to wait for Part II, and figured it out myself.
-
-    ## Loading required package: nlme
-
-    ## This is mgcv 1.8-23. For overview type 'help("mgcv-package")'.
-
-    ## Loading required package: Rcpp
-
-    ## Loading required package: ggplot2
-
-    ## Loading 'brms' package (version 2.2.0). Useful instructions
-    ## can be found by typing help('brms'). A more detailed introduction
-    ## to the package is available through vignette('brms_overview').
-    ## Run theme_set(theme_default()) to use the default bayesplot theme.
-
-    ## 
-    ## Attaching package: 'brms'
-
-    ## The following objects are masked from 'package:mgcv':
-    ## 
-    ##     s, t2
-
-    ## This is bayesplot version 1.5.0
-
-    ## - Plotting theme set to bayesplot::theme_default()
-
-    ## - Online documentation at mc-stan.org/bayesplot
+Inspired by how easy it was to fit the model in `brms` I decided not to wait for Part II, and figured out how to model the non-constant variance myself.
 
 Load the example data mcycle and plot
 
@@ -61,6 +35,8 @@ ggplot(mcycle, aes(x = times, y = accel)) +
 ```
 
 ![](gam_with_brms_files/figure-markdown_github/unnamed-chunk-2-1.png)
+
+There is no way to fit a straight line to this data, and fitting a polynomial might also present some challenges. Clearly, the assumption of constant variance is violated but for the purposes of exposition we will proceed to fit a GAM and a Bayesian GAM using a smooth spline.
 
 Fit a model, *m*<sub>1</sub> with a GAM using the `mgcv` package.
 
@@ -94,10 +70,10 @@ summary(m1)
 Plot the marginal effects
 
 ``` r
-eS <- predict(m1, newdata = mcycle, type = "response", se = T)
-eS <- data.frame(eS, mcycle)
+me <- predict(m1, newdata = mcycle, type = "response", se = T)
+me <- data.frame(me, mcycle)
 
-ggplot(eS, aes(x = times, y = fit)) +
+ggplot(me, aes(x = times, y = fit)) +
   geom_line(size = 1, colour = "blue") +
   geom_ribbon(mapping = aes(ymin = fit - 1.96*se.fit, ymax = fit + 1.96*se.fit), alpha = 0.2) +
   geom_point(data = mcycle, aes(x = times, y = accel)) +
@@ -143,24 +119,21 @@ summary(m2)
     ## scale reduction factor on split chains (at convergence, Rhat = 1).
 
 ``` r
-#gam.vcomp(m1, rescale = FALSE)
-
 plot(marginal_effects(m2), points = TRUE)
 ```
 
 ![](gam_with_brms_files/figure-markdown_github/unnamed-chunk-5-1.png)
 
-It is clear that variance is not constant, but the model has made this assumption. Now fit a distributional regression model, *m*<sub>3</sub> which allows for non-constant variance.
+A possible solution is to model the non-constant variance by fitting a distributional regression model, *m*<sub>3</sub> which allows for this. The `bf` function in `brms` makes this trivially easy (in this example, at least) by letting you casually specify the additional term `sigma ~ s(times)` like you were ordering a kebab at 3am.
 
 ``` r
-## Distributional regression model
-
 m3 <- brm(bf(accel ~ s(times), sigma ~ s(times)),
   data = mcycle, family = gaussian(),
   cores = 2, seed = 17,
   iter = 4000, warmup = 1000, thin = 10, refresh = 0, 
   control = list(adapt_delta = 0.99, max_treedepth = 15)
 )
+
 summary(m3)
 ```
 
@@ -195,32 +168,32 @@ plot(marginal_effects(m3), points = TRUE)
 
 ![](gam_with_brms_files/figure-markdown_github/unnamed-chunk-6-1.png)
 
-This looks much better. Now compare models using posterior predictive checks (generate data from the models and compare to observed data). Red is *m*<sub>2</sub> and blue is *m*<sub>3</sub>.
+This looks much better, it's a good kebab at any time of day or night. Now compare models using posterior predictive checks (generate data from the models *y*<sup>*r**e**p*</sup> and compare to observed data *y*).
 
 ``` r
 par(mfrow = c(2, 2))
 pp_check(m2, nsamples = 30) + ggplot2::scale_color_manual(values = c("black", "indianred")) +
-  ggplot2::xlim(-200, 200)
+  ggplot2::xlim(-200, 200) + labs(title = "m2")
 ```
 
 ![](gam_with_brms_files/figure-markdown_github/unnamed-chunk-7-1.png)
 
 ``` r
 pp_check(m3, nsamples = 30) + ggplot2::scale_color_manual(values = c("black", "dodgerblue")) +
-  ggplot2::xlim(-200, 200)
+  ggplot2::xlim(-200, 200) + labs(title = "m3")
 ```
 
 ![](gam_with_brms_files/figure-markdown_github/unnamed-chunk-7-2.png)
 
 ``` r
 pp_check(m2, nsamples = 30, type = "ecdf_overlay") + ggplot2::scale_color_manual(values = c("black", "indianred")) +
-  ggplot2::xlim(-200, 200)
+  ggplot2::xlim(-200, 200) + labs(title = "m2")
 ```
 
 ![](gam_with_brms_files/figure-markdown_github/unnamed-chunk-7-3.png)
 
 ``` r
-pp_check(m3, nsamples = 30, type = "ecdf_overlay") + ggplot2::scale_color_manual(values = c("black", "dodgerblue"))+   ggplot2::xlim(-200, 200)
+pp_check(m3, nsamples = 30, type = "ecdf_overlay") + ggplot2::scale_color_manual(values = c("black", "dodgerblue"))+   ggplot2::xlim(-200, 200) + labs(title = "m3")
 ```
 
 ![](gam_with_brms_files/figure-markdown_github/unnamed-chunk-7-4.png)
