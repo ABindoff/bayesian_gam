@@ -1,0 +1,128 @@
+---
+title: "Bayesian GAMs and non-constant variance"
+output: github_document
+author: "Bindoff, A."
+---
+
+`r Sys.Date()`
+
+The first half of this analysis is lifted from a blog by Gavin Simpson https://www.fromthebottomoftheheap.net/2018/04/21/fitting-gams-with-brms/, which shows how to fit a GAM with the `brms` package and Stan in R. The analysis is well documented in the aforementioned blog, with the suggestion that in Part II the non-constant variance will be modelled.  
+
+Inspired by how easy it was to fit the model in `brms` I decided not to wait for Part II, and figured it out myself.  
+
+
+```{r, echo = F}
+knitr::opts_chunk$set(message = F, warning = F)
+## fitting GAMs with `brms`  (example lifted from https://www.fromthebottomoftheheap.net/2018/04/21/fitting-gams-with-brms/)
+
+library('mgcv')
+library('brms')
+library('ggplot2')
+library('schoenberg')
+library(bayesplot)
+
+#theme_set(theme_bw())
+
+```
+
+Load the example data mcycle and plot  
+
+
+```{r}
+## load the example data mcycle
+data(mcycle, package = 'MASS')
+
+## show data
+head(mcycle)
+ggplot(mcycle, aes(x = times, y = accel)) +
+  geom_point() +
+  labs(x = "Miliseconds post impact", y = "Acceleration (g)",
+       title = "Simulated Motorcycle Accident",
+       subtitle = "Measurements of head acceleration")
+```
+  
+Fit a model, $m_1$ with a GAM using the `mgcv` package.  
+
+
+```{r}
+m1 <- gam(accel ~ s(times), data = mcycle, method = "REML")
+summary(m1)
+```
+
+Plot the marginal effects  
+
+
+```{r}
+eS <- predict(m1, newdata = mcycle, type = "response", se = T)
+eS <- data.frame(eS, mcycle)
+
+ggplot(eS, aes(x = times, y = fit)) +
+  geom_line(size = 1, colour = "blue") +
+  geom_ribbon(mapping = aes(ymin = fit - 1.96*se.fit, ymax = fit + 1.96*se.fit), alpha = 0.2) +
+  geom_point(data = mcycle, aes(x = times, y = accel)) +
+  labs(y = "accel")
+
+
+
+```
+  
+Bayesian model, $m_2$, fitted with `brms` as per blog.  
+
+
+```{r}
+m2 <- brm(bf(accel ~ s(times)),
+          data = mcycle, family = gaussian(), cores = 2, seed = 17,
+          iter = 4000, warmup = 1000, thin = 10, refresh = 0, 
+          control = list(adapt_delta = 0.99))
+
+summary(m2)
+
+
+#gam.vcomp(m1, rescale = FALSE)
+
+plot(marginal_effects(m2), points = TRUE)
+```
+
+  
+  It is clear that variance is not constant, but the model has made this assumption. Now fit a distributional regression model, $m_3$ which allows for non-constant variance.  
+  
+
+```{r}
+## Distributional regression model
+
+m3 <- brm(bf(accel ~ s(times), sigma ~ s(times)),
+  data = mcycle, family = gaussian(),
+  cores = 2, seed = 17,
+  iter = 4000, warmup = 1000, thin = 10, refresh = 0, 
+  control = list(adapt_delta = 0.99, max_treedepth = 15)
+)
+summary(m3)
+plot(marginal_effects(m3), points = TRUE)
+```
+
+  
+  This looks much better. Now compare models using posterior predictive checks (generate data from the models and compare to observed data). Red is $m_2$ and blue is $m_3$.  
+  
+  
+
+```{r}
+par(mfrow = c(2, 2))
+pp_check(m2, nsamples = 30) + ggplot2::scale_color_manual(values = c("black", "indianred")) +
+  ggplot2::xlim(-200, 200)
+pp_check(m3, nsamples = 30) + ggplot2::scale_color_manual(values = c("black", "dodgerblue")) +
+  ggplot2::xlim(-200, 200)
+pp_check(m2, nsamples = 30, type = "ecdf_overlay") + ggplot2::scale_color_manual(values = c("black", "indianred")) +
+  ggplot2::xlim(-200, 200)
+pp_check(m3, nsamples = 30, type = "ecdf_overlay") + ggplot2::scale_color_manual(values = c("black", "dodgerblue"))+   ggplot2::xlim(-200, 200)
+```
+  
+  
+Compare models with Leave One Out cross-validation (smaller is better)  
+
+
+
+```{r}
+LOO(m2, m3)
+
+```
+
